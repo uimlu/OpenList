@@ -98,20 +98,20 @@ jobs:
             --config "$UNIKRAFT_CONFIG" \
             profile list
 
-      - name: Check target volume
+      - name: Check volumes
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "当前 SFO Volume："
+          echo "当前 Volume 列表："
 
           unikraft \
             --config "$UNIKRAFT_CONFIG" \
             volumes list
 
           echo
-          echo "准备删除的 Volume：$TARGET_VOLUME"
-          echo "保留的 Volume：openlist-data"
+          echo "将要删除：$TARGET_VOLUME"
+          echo "必须保留：openlist-data"
 
       - name: Delete anyrouter-check-data only
         shell: bash
@@ -124,13 +124,12 @@ jobs:
           printf 'y\n' | unikraft \
             --config "$UNIKRAFT_CONFIG" \
             volume delete \
-            --metro "$UKC_METRO" \
             "$TARGET_VOLUME"
 
           echo
-          echo "删除命令已完成。"
+          echo "$TARGET_VOLUME 删除完成。"
 
-      - name: Verify result
+      - name: Verify volumes
         shell: bash
         run: |
           set -euo pipefail
@@ -142,5 +141,5 @@ jobs:
             volumes list
 
           echo
-          echo "已执行删除：$TARGET_VOLUME"
-          echo "openlist-data 未被操作。"
+          echo "已删除：anyrouter-check-data"
+          echo "已保留：openlist-data"
