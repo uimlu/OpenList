@@ -14,7 +14,7 @@ jobs:
       UKC_METRO: sfo
       UKC_ORGANIZATION: mingy
       APP_NAME: qinglong
-      APP_IMAGE: whyour/qinglong:latest
+      APP_IMAGE: docker.io/whyour/qinglong:latest
       APP_VOLUME: qinglong-data
 
     steps:
@@ -151,6 +151,7 @@ jobs:
           echo "正在启动 QingLong..."
           echo "Metro: $UKC_METRO"
           echo "Instance: $APP_NAME"
+          echo "Image: $APP_IMAGE"
           echo "CPU: 1 vCPU"
           echo "Memory: 2048M"
 
