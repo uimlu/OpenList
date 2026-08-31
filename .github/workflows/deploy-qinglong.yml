@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout deployment repository
+      - name: Checkout current repository
         uses: actions/checkout@v4
 
       - name: Install Unikraft CLI
@@ -34,25 +34,23 @@ jobs:
           curl --proto '=https' --tlsv1.2 -fsSL \
             https://unikraft.com/cli/install.sh | sh
 
-          export PATH="$HOME/.local/bin:$HOME/.unikraft/bin:/usr/local/bin:$PATH"
-
-          if ! command -v unikraft >/dev/null 2>&1; then
-            echo "错误：找不到 unikraft CLI"
-            echo "PATH=$PATH"
-            find "$HOME" -type f -name unikraft -print 2>/dev/null || true
-            exit 1
-          fi
-
-          unikraft --help
-
-      - name: Add Unikraft CLI to PATH
-        shell: bash
-        run: |
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$HOME/.unikraft/bin" >> "$GITHUB_PATH"
           echo "/usr/local/bin" >> "$GITHUB_PATH"
 
-      - name: Configure Unikraft Cloud profile
+          export PATH="$HOME/.local/bin:$HOME/.unikraft/bin:/usr/local/bin:$PATH"
+
+          if ! command -v unikraft >/dev/null 2>&1; then
+            echo "错误：找不到 unikraft CLI"
+            echo "当前 PATH：$PATH"
+            find "$HOME" -type f -name unikraft -print 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "Unikraft CLI 安装成功"
+          unikraft --help
+
+      - name: Configure Unikraft Cloud
         shell: bash
         env:
           UKC_TOKEN: ${{ secrets.UKC_TOKEN }}
@@ -60,7 +58,7 @@ jobs:
           set -e
 
           if [ -z "$UKC_TOKEN" ]; then
-            echo "错误：GitHub Secret UKC_TOKEN 未设置"
+            echo "错误：没有找到 GitHub Secret UKC_TOKEN"
             exit 1
           fi
 
@@ -80,11 +78,11 @@ jobs:
 
           chmod 600 "$UKC_CONFIG"
 
-          echo "Unikraft 配置已创建"
+          echo "Unikraft Cloud 配置完成"
           echo "Metro: $UKC_METRO"
           echo "Organization: $UKC_ORGANIZATION"
 
-      - name: Check Unikraft authentication
+      - name: Verify Unikraft authentication
         shell: bash
         run: |
           set -e
@@ -93,6 +91,7 @@ jobs:
             --config "$UKC_CONFIG" \
             profile list
 
+          echo "验证 Token..."
           unikraft \
             --config "$UKC_CONFIG" \
             images list
@@ -105,13 +104,24 @@ jobs:
           path: qinglong
           fetch-depth: 1
 
-      - name: Prepare QingLong Unikraft build files
+      - name: Prepare QingLong build context
         shell: bash
         run: |
           set -e
 
+          echo "检查 QingLong 源码..."
+
           test -d qinglong
           test -f qinglong/docker/Dockerfile
+          test -f qinglong/package.json
+          test -f qinglong/pnpm-lock.yaml
+          test -f qinglong/.npmrc
+
+          echo "正在准备 Dockerfile..."
+
+          # Dockerfile 原本位于 docker 子目录，
+          # 但它需要读取仓库根目录下的 package.json、pnpm-lock.yaml 等文件。
+          cp qinglong/docker/Dockerfile qinglong/Dockerfile
 
           cat > qinglong/Kraftfile <<'EOF'
           spec: v0.7
@@ -119,17 +129,21 @@ jobs:
           runtime: base-compat:latest
 
           rootfs:
-            source: ./docker/Dockerfile
+            source: ./Dockerfile
             format: erofs
           EOF
 
-          echo "QingLong 目录："
+          echo "构建目录内容："
           ls -la qinglong
 
-          echo "Dockerfile："
-          test -f qinglong/docker/Dockerfile
+          echo "检查构建上下文文件："
+          test -f qinglong/Dockerfile
+          test -f qinglong/Kraftfile
+          test -f qinglong/package.json
+          test -f qinglong/pnpm-lock.yaml
+          test -f qinglong/.npmrc
 
-          echo "Kraftfile："
+          echo "Kraftfile 内容："
           cat qinglong/Kraftfile
 
       - name: Build and push QingLong image
@@ -141,7 +155,7 @@ jobs:
 
           echo "正在构建 QingLong 镜像..."
           echo "构建目录：$(pwd)"
-          echo "镜像地址：${APP_IMAGE}"
+          echo "镜像地址：$APP_IMAGE"
 
           unikraft \
             --config "$UKC_CONFIG" \
@@ -149,14 +163,14 @@ jobs:
             build . \
             --output "$APP_IMAGE"
 
-          echo "镜像构建和推送命令已完成"
+          echo "QingLong 镜像构建并推送成功"
 
-      - name: Verify QingLong image exists
+      - name: Verify QingLong image
         shell: bash
         run: |
           set -e
 
-          echo "正在检查镜像是否已经推送到 Unikraft Registry..."
+          echo "正在检查 Registry 中的镜像..."
 
           IMAGE_LIST="$(
             unikraft \
@@ -169,14 +183,14 @@ jobs:
 
           if ! echo "$IMAGE_LIST" | grep -Eqi \
             'mingy/qinglong|index\.unikraft\.io/mingy/qinglong'; then
-            echo "错误：镜像没有出现在 Registry 中"
+            echo "错误：Registry 中没有找到 QingLong 镜像"
             echo "期望镜像：$APP_IMAGE"
             exit 1
           fi
 
           echo "镜像确认存在：$APP_IMAGE"
 
-      - name: Create QingLong volume if needed
+      - name: Create QingLong volume
         shell: bash
         run: |
           set -e
@@ -187,7 +201,7 @@ jobs:
           if unikraft \
             --config "$UKC_CONFIG" \
             --timeout 5m \
-            volumes get "$APP_VOLUME" \
+            volume get "$APP_VOLUME" \
             >/dev/null 2>&1; then
 
             echo "Volume $APP_VOLUME 已存在，继续使用"
@@ -202,17 +216,17 @@ jobs:
               --name "$APP_VOLUME" \
               --size 1024M
 
-            echo "Volume 创建成功"
+            echo "Volume $APP_VOLUME 创建成功"
           fi
 
-          echo "当前 Volume 列表："
+          echo "当前 Volume："
 
           unikraft \
             --config "$UKC_CONFIG" \
             --timeout 5m \
-            volumes list
+            volume list
 
-      - name: Remove old QingLong instance only
+      - name: Delete old QingLong instance only
         shell: bash
         run: |
           set -e
@@ -222,7 +236,7 @@ jobs:
           if unikraft \
             --config "$UKC_CONFIG" \
             --timeout 5m \
-            instances get "$APP_NAME" \
+            instance get "$APP_NAME" \
             >/dev/null 2>&1; then
 
             echo "正在删除旧实例：$APP_NAME"
@@ -230,14 +244,15 @@ jobs:
             unikraft \
               --config "$UKC_CONFIG" \
               --timeout 10m \
-              instances delete "$APP_NAME"
+              instance delete "$APP_NAME"
 
-            echo "旧 QingLong 实例已删除"
+            echo "旧 QingLong 实例删除成功"
           else
             echo "没有发现旧的 QingLong 实例"
           fi
 
-          echo "不会删除以下资源："
+          echo ""
+          echo "以下资源不会被删除："
           echo "- openlist"
           echo "- openlist-data"
 
@@ -269,37 +284,57 @@ jobs:
             --env "QlBaseUrl=/" \
             --env "QlPort=5700"
 
-      - name: Get QingLong access URL
+          echo "QingLong 实例创建成功"
+
+      - name: Show QingLong instance information
         shell: bash
         run: |
           set -e
 
           echo "等待实例信息生成..."
-          sleep 10
+          sleep 15
 
-          echo "当前实例列表："
+          echo "QingLong 实例信息："
 
-          INSTANCE_LIST="$(
+          unikraft \
+            --config "$UKC_CONFIG" \
+            --timeout 5m \
+            instance get "$APP_NAME"
+
+          echo ""
+          echo "所有实例："
+
+          unikraft \
+            --config "$UKC_CONFIG" \
+            --timeout 5m \
+            instance list
+
+      - name: Get QingLong access URL
+        shell: bash
+        run: |
+          set -e
+
+          INSTANCE_JSON="$(
             unikraft \
               --config "$UKC_CONFIG" \
               --timeout 5m \
-              instances list
+              instance get "$APP_NAME" \
+              --output json
           )"
 
-          echo "$INSTANCE_LIST"
+          echo "$INSTANCE_JSON" > qinglong-instance.json
+
+          echo "实例 JSON 信息："
+          cat qinglong-instance.json
 
           FQDN="$(
-            echo "$INSTANCE_LIST" |
-            awk -v app="$APP_NAME" '
-              $0 ~ app {
-                for (i = 1; i <= NF; i++) {
-                  if ($i ~ /\.unikraft\.app$/) {
-                    print $i
-                    exit
-                  }
-                }
-              }
-            '
+            jq -r '
+              .. |
+              objects |
+              .fqdn? //
+              empty
+            ' qinglong-instance.json |
+            grep -m 1 -E '\.unikraft\.app$' || true
           )"
 
           if [ -n "$FQDN" ]; then
@@ -323,12 +358,12 @@ jobs:
               echo "- Volume：\`$APP_VOLUME:/ql/data\`"
             } >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "实例已经创建，但暂时没有获取到 FQDN"
-            echo "请稍等后在实例列表中查看访问地址"
+            echo "实例已经创建，但暂时没有自动获取到 FQDN"
+            echo "请查看上方 instance list 输出中的 FQDN"
 
             {
               echo "## QingLong 已创建"
               echo ""
-              echo "暂时没有自动获取到访问地址，请查看上方实例列表。"
+              echo "暂时没有自动获取到访问地址，请查看 Actions 日志中的 FQDN。"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
