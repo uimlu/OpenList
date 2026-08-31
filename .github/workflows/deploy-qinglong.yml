@@ -13,7 +13,7 @@ env:
   UKC_METRO: sfo
   UKC_ORGANIZATION: mingy
   APP_NAME: qinglong
-  APP_IMAGE: index.unikraft.io/mingy/qinglong:latest
+  APP_IMAGE: mingy/qinglong:latest
   APP_VOLUME: qinglong-data
   UKC_CONFIG: /home/runner/.config/unikraft/config.yaml
 
@@ -137,7 +137,7 @@ jobs:
           EOF
 
           echo ""
-          echo "检查构建文件："
+          echo "检查构建所需文件："
 
           test -f qinglong/Dockerfile
           test -f qinglong/Kraftfile
@@ -178,7 +178,7 @@ jobs:
         run: |
           set -e
 
-          echo "正在检查 Registry 中的镜像..."
+          echo "正在检查 Registry 中的 QingLong 镜像..."
 
           IMAGE_LIST="$(
             unikraft \
@@ -190,14 +190,14 @@ jobs:
           echo "$IMAGE_LIST"
 
           if ! echo "$IMAGE_LIST" | grep -Eqi \
-            'mingy/qinglong|index\.unikraft\.io/mingy/qinglong'; then
+            '(^|[[:space:]])mingy/qinglong([:@[:space:]]|$)'; then
             echo "错误：Registry 中没有找到 QingLong 镜像"
             echo "期望镜像：$APP_IMAGE"
             exit 1
           fi
 
           echo ""
-          echo "确认镜像存在：$APP_IMAGE"
+          echo "镜像确认存在：$APP_IMAGE"
 
       - name: Create QingLong volume if needed
         shell: bash
@@ -366,6 +366,7 @@ jobs:
               echo ""
               echo "- Metro：\`$UKC_METRO\`"
               echo "- Instance：\`$APP_NAME\`"
+              echo "- Image：\`$APP_IMAGE\`"
               echo "- CPU：1 vCPU"
               echo "- Memory：2048M"
               echo "- Port：5700"
