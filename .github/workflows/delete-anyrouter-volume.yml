@@ -1,0 +1,146 @@
+name: Delete AnyRouter Volume Only
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  delete-volume:
+    runs-on: ubuntu-latest
+
+    env:
+      UKC_METRO: sfo
+      UKC_ORGANIZATION: mingy
+      TARGET_VOLUME: anyrouter-check-data
+
+    steps:
+      - name: Install Unikraft CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl --proto '=https' \
+            --tlsv1.2 \
+            -fsSL \
+            https://unikraft.com/cli/install.sh | sh
+
+          CLI_PATH="$(command -v unikraft || true)"
+
+          if [ -z "$CLI_PATH" ]; then
+            for DIR in \
+              "$HOME/.local/bin" \
+              "$HOME/bin" \
+              "/usr/local/bin"; do
+
+              if [ -x "$DIR/unikraft" ]; then
+                CLI_PATH="$DIR/unikraft"
+                break
+              fi
+            done
+          fi
+
+          if [ -z "$CLI_PATH" ]; then
+            echo "错误：找不到 unikraft CLI。"
+            exit 1
+          fi
+
+          CLI_DIR="$(dirname "$CLI_PATH")"
+
+          echo "$CLI_DIR" >> "$GITHUB_PATH"
+          export PATH="$CLI_DIR:$PATH"
+
+          command -v unikraft
+          unikraft --help
+
+      - name: Configure Unikraft profile
+        env:
+          UKC_TOKEN: ${{ secrets.UKC_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${UKC_TOKEN:-}" ]; then
+            echo "错误：没有找到 GitHub Secret UKC_TOKEN。"
+            exit 1
+          fi
+
+          if [[ "$UKC_TOKEN" == Bearer\ * ]]; then
+            echo "错误：UKC_TOKEN 不要包含 Bearer 前缀。"
+            exit 1
+          fi
+
+          if [[ "$UKC_TOKEN" =~ [[:space:]] ]]; then
+            echo "错误：UKC_TOKEN 包含空格、换行或其他空白字符。"
+            exit 1
+          fi
+
+          export UNIKRAFT_CONFIG="$RUNNER_TEMP/unikraft-config.yaml"
+
+          echo "UNIKRAFT_CONFIG=$UNIKRAFT_CONFIG" >> "$GITHUB_ENV"
+
+          cat > "$UNIKRAFT_CONFIG" <<EOF
+          profiles:
+            default:
+              type: cloud
+              token: "$UKC_TOKEN"
+              organization: "$UKC_ORGANIZATION"
+              metros:
+                - name: "$UKC_METRO"
+                  endpoint: "https://api.$UKC_METRO.unikraft.cloud"
+                  country: "US"
+          EOF
+
+          chmod 600 "$UNIKRAFT_CONFIG"
+
+          unikraft \
+            --config "$UNIKRAFT_CONFIG" \
+            profile list
+
+      - name: Check target volume
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "当前 SFO Volume："
+
+          unikraft \
+            --config "$UNIKRAFT_CONFIG" \
+            volumes list
+
+          echo
+          echo "准备删除的 Volume：$TARGET_VOLUME"
+          echo "保留的 Volume：openlist-data"
+
+      - name: Delete anyrouter-check-data only
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "正在删除：$TARGET_VOLUME"
+          echo "不会删除：openlist-data"
+
+          printf 'y\n' | unikraft \
+            --config "$UNIKRAFT_CONFIG" \
+            volume delete \
+            --metro "$UKC_METRO" \
+            "$TARGET_VOLUME"
+
+          echo
+          echo "删除命令已完成。"
+
+      - name: Verify result
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "删除后的 Volume 列表："
+
+          unikraft \
+            --config "$UNIKRAFT_CONFIG" \
+            volumes list
+
+          echo
+          echo "已执行删除：$TARGET_VOLUME"
+          echo "openlist-data 未被操作。"
