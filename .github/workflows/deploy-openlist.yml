@@ -1,0 +1,269 @@
+name: Deploy OpenList
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      UKC_METRO: sin
+      UKC_ORGANIZATION: mingy
+      OPENLIST_IMAGE: index.unikraft.io/mingy/openlist:latest
+      OPENLIST_INSTANCE: openlist
+      OPENLIST_VOLUME: openlist-data
+
+    steps:
+      - name: Checkout OpenList source
+        uses: actions/checkout@v4
+        with:
+          repository: OpenListTeam/OpenList
+          ref: main
+          fetch-depth: 1
+
+      - name: Install Unikraft CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl --proto '=https' \
+            --tlsv1.2 \
+            -fsSL \
+            https://unikraft.com/cli/install.sh | sh
+
+          CLI_PATH="$(command -v unikraft || true)"
+
+          if [ -z "$CLI_PATH" ]; then
+            for DIR in \
+              "$HOME/.local/bin" \
+              "$HOME/bin" \
+              "/usr/local/bin"; do
+
+              if [ -x "$DIR/unikraft" ]; then
+                CLI_PATH="$DIR/unikraft"
+                break
+              fi
+            done
+          fi
+
+          if [ -z "$CLI_PATH" ]; then
+            echo "错误：找不到 unikraft CLI。"
+            exit 1
+          fi
+
+          CLI_DIR="$(dirname "$CLI_PATH")"
+
+          echo "$CLI_DIR" >> "$GITHUB_PATH"
+          export PATH="$CLI_DIR:$PATH"
+
+          command -v unikraft
+          unikraft --help
+
+      - name: Configure Unikraft profile
+        env:
+          UKC_TOKEN: ${{ secrets.UKC_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${UKC_TOKEN:-}" ]; then
+            echo "错误：没有找到 GitHub Secret UKC_TOKEN。"
+            exit 1
+          fi
+
+          if [[ "$UKC_TOKEN" == Bearer\ * ]]; then
+            echo "错误：UKC_TOKEN 不要包含 Bearer 前缀。"
+            exit 1
+          fi
+
+          if [[ "$UKC_TOKEN" =~ [[:space:]] ]]; then
+            echo "错误：UKC_TOKEN 中包含空格、换行或其他空白字符。"
+            exit 1
+          fi
+
+          export UNIKRAFT_CONFIG="$RUNNER_TEMP/unikraft-config.yaml"
+
+          echo "UNIKRAFT_CONFIG=$UNIKRAFT_CONFIG" >> "$GITHUB_ENV"
+
+          mkdir -p "$(dirname "$UNIKRAFT_CONFIG")"
+
+          cat > "$UNIKRAFT_CONFIG" <<EOF
+          profiles:
+            default:
+              type: cloud
+              token: "$UKC_TOKEN"
+              organization: "$UKC_ORGANIZATION"
+              metros:
+                - name: "$UKC_METRO"
+                  endpoint: "https://api.$UKC_METRO.unikraft.cloud"
+                  country: "SG"
+          EOF
+
+          chmod 600 "$UNIKRAFT_CONFIG"
+
+          echo "Unikraft Profile 配置完成。"
+
+          unikraft \
+            --config "$UNIKRAFT_CONFIG" \
+            profile list
+
+      - name: Create Kraftfile
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > Kraftfile <<'EOF'
+          spec: v0.7
+
+          runtime: base-compat:latest
+
+          rootfs:
+            source: ./Dockerfile
+            format: erofs
+
+          cmd: ["/entrypoint.sh", "server"]
+          EOF
+
+          echo "Kraftfile 内容："
+          cat Kraftfile
+
+      - name: Create persistent volume
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VOLUME_INFO="$(
+            unikraft \
+              --config "$UNIKRAFT_CONFIG" \
+              volumes list 2>&1 || true
+          )"
+
+          echo "$VOLUME_INFO"
+
+          if printf '%s\n' "$VOLUME_INFO" | grep -Fq "$OPENLIST_VOLUME"; then
+            echo "Volume $OPENLIST_VOLUME 已存在，继续使用。"
+          else
+            echo "正在创建 Volume $OPENLIST_VOLUME..."
+
+            unikraft \
+              --config "$UNIKRAFT_CONFIG" \
+              volume create \
+              --metro "$UKC_METRO" \
+              --name "$OPENLIST_VOLUME" \
+              --size 1024M
+          fi
+
+      - name: Build and push OpenList image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "正在构建 OpenList 镜像..."
+          echo "镜像地址：$OPENLIST_IMAGE"
+
+          unikraft \
+            --config "$UNIKRAFT_CONFIG" \
+            --timeout 20m \
+            build . \
+            --output "$OPENLIST_IMAGE"
+
+          echo "OpenList 镜像构建和推送完成。"
+
+      - name: Run OpenList instance
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ADMIN_PASSWORD="$(openssl rand -hex 16)"
+
+          echo "OPENLIST_ADMIN_PASSWORD=$ADMIN_PASSWORD" >> "$GITHUB_ENV"
+
+          echo "正在启动 OpenList..."
+          echo "Metro: $UKC_METRO"
+          echo "Instance: $OPENLIST_INSTANCE"
+
+          unikraft \
+            --config "$UNIKRAFT_CONFIG" \
+            --timeout 20m \
+            run \
+            --metro "$UKC_METRO" \
+            --name "$OPENLIST_INSTANCE" \
+            --memory 1024M \
+            --restart always \
+            --publish 443:5244/http+tls \
+            --volume "$OPENLIST_VOLUME:/opt/openlist/data" \
+            --env "TZ=Asia/Shanghai" \
+            --env "UMASK=022" \
+            --env "OPENLIST_ADMIN_PASSWORD=$ADMIN_PASSWORD" \
+            "$OPENLIST_IMAGE"
+
+      - name: Wait for OpenList
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "等待 OpenList 进入 running 状态..."
+
+          unikraft \
+            --config "$UNIKRAFT_CONFIG" \
+            --timeout 10m \
+            instance wait "$OPENLIST_INSTANCE" \
+            --until 'state==running'
+
+          echo "OpenList 已进入 running 状态。"
+
+      - name: Show OpenList URL
+        shell: bash
+        run: |
+          set +e
+
+          echo "正在读取 OpenList 实例信息..."
+
+          INSTANCE_INFO="$(
+            unikraft \
+              --config "$UNIKRAFT_CONFIG" \
+              instances list 2>&1
+          )"
+
+          echo "$INSTANCE_INFO"
+
+          FQDN="$(
+            printf '%s\n' "$INSTANCE_INFO" \
+              | grep -Eo '[a-zA-Z0-9.-]+\.(unikraft\.app|kraft\.host)' \
+              | head -n 1
+          )"
+
+          if [ -n "$FQDN" ]; then
+            OPENLIST_URL="https://$FQDN"
+          else
+            OPENLIST_URL="请查看上方实例列表中的 FQDN"
+          fi
+
+          {
+            echo "## OpenList 部署结果"
+            echo
+            echo "**访问地址：**"
+            echo
+            echo "$OPENLIST_URL"
+            echo
+            echo "**管理员账号：**"
+            echo
+            echo "admin"
+            echo
+            echo "**管理员初始密码：**"
+            echo
+            echo "$OPENLIST_ADMIN_PASSWORD"
+            echo
+            echo "登录后请立即修改管理员密码。"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo
+          echo "========================================"
+          echo "OpenList 访问地址：$OPENLIST_URL"
+          echo "管理员账号：admin"
+          echo "管理员初始密码：$OPENLIST_ADMIN_PASSWORD"
+          echo "========================================"
