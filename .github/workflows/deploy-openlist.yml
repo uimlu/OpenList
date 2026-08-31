@@ -81,15 +81,13 @@ jobs:
           fi
 
           if [[ "$UKC_TOKEN" =~ [[:space:]] ]]; then
-            echo "错误：UKC_TOKEN 中包含空格、换行或其他空白字符。"
+            echo "错误：UKC_TOKEN 包含空格、换行或其他空白字符。"
             exit 1
           fi
 
           export UNIKRAFT_CONFIG="$RUNNER_TEMP/unikraft-config.yaml"
 
           echo "UNIKRAFT_CONFIG=$UNIKRAFT_CONFIG" >> "$GITHUB_ENV"
-
-          mkdir -p "$(dirname "$UNIKRAFT_CONFIG")"
 
           cat > "$UNIKRAFT_CONFIG" <<EOF
           profiles:
@@ -185,6 +183,7 @@ jobs:
           echo "正在启动 OpenList..."
           echo "Metro: $UKC_METRO"
           echo "Instance: $OPENLIST_INSTANCE"
+          echo "Image: $OPENLIST_IMAGE"
 
           unikraft \
             --config "$UNIKRAFT_CONFIG" \
@@ -192,14 +191,14 @@ jobs:
             run \
             --metro "$UKC_METRO" \
             --name "$OPENLIST_INSTANCE" \
+            --image "$OPENLIST_IMAGE" \
             --memory 1024M \
             --restart always \
             --publish 443:5244/http+tls \
             --volume "$OPENLIST_VOLUME:/opt/openlist/data" \
             --env "TZ=Asia/Shanghai" \
             --env "UMASK=022" \
-            --env "OPENLIST_ADMIN_PASSWORD=$ADMIN_PASSWORD" \
-            "$OPENLIST_IMAGE"
+            --env "OPENLIST_ADMIN_PASSWORD=$ADMIN_PASSWORD"
 
       - name: Wait for OpenList
         shell: bash
