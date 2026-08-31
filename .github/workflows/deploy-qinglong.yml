@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: whyour/qinglong
-          ref: master
+          ref: develop
           fetch-depth: 1
 
       - name: Install Unikraft CLI
@@ -107,23 +107,20 @@ jobs:
             --config "$UNIKRAFT_CONFIG" \
             profile list
 
-      - name: Create Kraftfile
+      - name: Prepare QingLong Dockerfile
         shell: bash
         run: |
           set -euo pipefail
 
-          cat > Kraftfile <<'EOF'
-          spec: v0.7
+          if [ ! -f "docker/Dockerfile" ]; then
+            echo "错误：找不到 docker/Dockerfile。"
+            exit 1
+          fi
 
-          runtime: base-compat:latest
+          cp docker/Dockerfile Dockerfile
 
-          rootfs:
-            source: ./Dockerfile
-            format: erofs
-          EOF
-
-          echo "Kraftfile 内容："
-          cat Kraftfile
+          echo "已将 docker/Dockerfile 复制到构建根目录。"
+          ls -lh Dockerfile
 
       - name: Delete old QingLong instance
         shell: bash
@@ -165,6 +162,24 @@ jobs:
               --name "$APP_VOLUME" \
               --size 1024M
           fi
+
+      - name: Create Kraftfile
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > Kraftfile <<'EOF'
+          spec: v0.7
+
+          runtime: base-compat:latest
+
+          rootfs:
+            source: ./Dockerfile
+            format: erofs
+          EOF
+
+          echo "Kraftfile 内容："
+          cat Kraftfile
 
       - name: Build and push QingLong image
         shell: bash
