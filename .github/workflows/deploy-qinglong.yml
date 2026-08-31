@@ -97,12 +97,12 @@ jobs:
             --config "$UKC_CONFIG" \
             images list
 
-      - name: Clean old AnyRouter image
+      - name: Delete residual QingLong image
         shell: bash
         run: |
           set -e
 
-          echo "当前 Registry 镜像："
+          echo "删除前的 Registry 镜像："
 
           unikraft \
             --config "$UKC_CONFIG" \
@@ -110,27 +110,20 @@ jobs:
             images list
 
           echo ""
-          echo "正在尝试删除旧的 AnyRouter 镜像..."
-
-          # 只删除 AnyRouter 镜像，不删除 OpenList 镜像
-          unikraft \
-            --config "$UKC_CONFIG" \
-            --timeout 10m \
-            images delete mingy/anyrouter-check:latest \
-            || true
+          echo "正在删除失败推送后残留的 QingLong 镜像..."
+          echo "目标：mingy/qinglong:latest"
 
           unikraft \
             --config "$UKC_CONFIG" \
             --timeout 10m \
-            images delete index.unikraft.io/mingy/anyrouter-check:latest \
-            || true
+            images delete mingy/qinglong:latest
 
           echo ""
           echo "等待 Registry 更新..."
-          sleep 15
+          sleep 30
 
           echo ""
-          echo "清理后的 Registry 镜像："
+          echo "删除后的 Registry 镜像："
 
           unikraft \
             --config "$UKC_CONFIG" \
@@ -158,10 +151,8 @@ jobs:
           test -f qinglong/pnpm-lock.yaml
           test -f qinglong/.npmrc
 
-          echo "正在准备 Dockerfile..."
+          echo "将 Dockerfile 复制到 QingLong 根目录..."
 
-          # 原 Dockerfile 位于 docker 子目录。
-          # 复制到仓库根目录，使构建上下文包含项目根目录文件。
           cp qinglong/docker/Dockerfile qinglong/Dockerfile
 
           cat > qinglong/Kraftfile <<'EOF'
@@ -174,7 +165,8 @@ jobs:
             format: erofs
           EOF
 
-          echo "检查构建文件："
+          echo ""
+          echo "检查构建所需文件："
 
           test -f qinglong/Dockerfile
           test -f qinglong/Kraftfile
@@ -183,7 +175,7 @@ jobs:
           test -f qinglong/.npmrc
 
           echo ""
-          echo "QingLong 目录："
+          echo "QingLong 构建目录："
           ls -la qinglong
 
           echo ""
@@ -299,7 +291,7 @@ jobs:
           fi
 
           echo ""
-          echo "确认保留以下资源："
+          echo "以下资源不会被删除："
           echo "- openlist"
           echo "- openlist-data"
           echo "- qinglong-data"
@@ -373,7 +365,8 @@ jobs:
             --output json \
             > qinglong-instance.json
 
-          echo "实例 JSON："
+          echo ""
+          echo "实例 JSON 信息："
           cat qinglong-instance.json
 
           FQDN="$(
