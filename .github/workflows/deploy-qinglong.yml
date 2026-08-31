@@ -14,10 +14,17 @@ jobs:
       UKC_METRO: sfo
       UKC_ORGANIZATION: mingy
       APP_NAME: qinglong
-      APP_IMAGE: docker.io/whyour/qinglong:latest
+      APP_IMAGE: index.unikraft.io/mingy/qinglong:latest
       APP_VOLUME: qinglong-data
 
     steps:
+      - name: Checkout QingLong source
+        uses: actions/checkout@v4
+        with:
+          repository: whyour/qinglong
+          ref: master
+          fetch-depth: 1
+
       - name: Install Unikraft CLI
         shell: bash
         run: |
@@ -96,11 +103,27 @@ jobs:
 
           chmod 600 "$UNIKRAFT_CONFIG"
 
-          echo "Unikraft Profile 配置完成。"
-
           unikraft \
             --config "$UNIKRAFT_CONFIG" \
             profile list
+
+      - name: Create Kraftfile
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > Kraftfile <<'EOF'
+          spec: v0.7
+
+          runtime: base-compat:latest
+
+          rootfs:
+            source: ./Dockerfile
+            format: erofs
+          EOF
+
+          echo "Kraftfile 内容："
+          cat Kraftfile
 
       - name: Delete old QingLong instance
         shell: bash
@@ -143,6 +166,22 @@ jobs:
               --size 1024M
           fi
 
+      - name: Build and push QingLong image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "正在构建 QingLong 镜像..."
+          echo "镜像地址：$APP_IMAGE"
+
+          unikraft \
+            --config "$UNIKRAFT_CONFIG" \
+            --timeout 30m \
+            build . \
+            --output "$APP_IMAGE"
+
+          echo "QingLong 镜像构建和推送完成。"
+
       - name: Run QingLong
         shell: bash
         run: |
@@ -157,7 +196,7 @@ jobs:
 
           unikraft \
             --config "$UNIKRAFT_CONFIG" \
-            --timeout 20m \
+            --timeout 30m \
             run \
             --metro "$UKC_METRO" \
             --name "$APP_NAME" \
