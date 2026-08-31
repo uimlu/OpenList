@@ -161,7 +161,7 @@ jobs:
             --metro "$UKC_METRO" \
             --name "$APP_NAME" \
             --image "$APP_IMAGE" \
-            --cpu 2 \
+            --vcpus 2 \
             --memory 2048M \
             --restart always \
             --publish 443:5700/http+tls \
