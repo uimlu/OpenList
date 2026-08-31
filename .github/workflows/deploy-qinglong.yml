@@ -151,7 +151,7 @@ jobs:
           echo "正在启动 QingLong..."
           echo "Metro: $UKC_METRO"
           echo "Instance: $APP_NAME"
-          echo "CPU: 2 vCPU"
+          echo "CPU: 1 vCPU"
           echo "Memory: 2048M"
 
           unikraft \
@@ -161,7 +161,7 @@ jobs:
             --metro "$UKC_METRO" \
             --name "$APP_NAME" \
             --image "$APP_IMAGE" \
-            --vcpus 2 \
+            --vcpus 1 \
             --memory 2048M \
             --restart always \
             --publish 443:5700/http+tls \
@@ -220,7 +220,7 @@ jobs:
             echo
             echo "**CPU：**"
             echo
-            echo "2 vCPU"
+            echo "1 vCPU"
             echo
             echo "**内存：**"
             echo
@@ -234,7 +234,7 @@ jobs:
           echo
           echo "========================================"
           echo "QingLong 访问地址：$QINGLONG_URL"
-          echo "CPU：2 vCPU"
+          echo "CPU：1 vCPU"
           echo "内存：2048 MB"
           echo "数据目录：/ql/data"
           echo "========================================"
