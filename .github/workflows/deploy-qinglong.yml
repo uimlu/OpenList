@@ -93,37 +93,8 @@ jobs:
             --config "$UKC_CONFIG" \
             profile list
 
-          unikraft \
-            --config "$UKC_CONFIG" \
-            images list
-
-      - name: Delete residual QingLong image
-        shell: bash
-        run: |
-          set -e
-
-          echo "删除前的 Registry 镜像："
-
-          unikraft \
-            --config "$UKC_CONFIG" \
-            --timeout 5m \
-            images list
-
           echo ""
-          echo "正在删除失败推送后残留的 QingLong 镜像..."
-          echo "目标：mingy/qinglong:latest"
-
-          unikraft \
-            --config "$UKC_CONFIG" \
-            --timeout 10m \
-            images delete mingy/qinglong:latest
-
-          echo ""
-          echo "等待 Registry 更新..."
-          sleep 30
-
-          echo ""
-          echo "删除后的 Registry 镜像："
+          echo "当前 Registry 镜像："
 
           unikraft \
             --config "$UKC_CONFIG" \
@@ -151,7 +122,7 @@ jobs:
           test -f qinglong/pnpm-lock.yaml
           test -f qinglong/.npmrc
 
-          echo "将 Dockerfile 复制到 QingLong 根目录..."
+          echo "复制 Dockerfile 到 QingLong 根目录..."
 
           cp qinglong/docker/Dockerfile qinglong/Dockerfile
 
@@ -166,7 +137,7 @@ jobs:
           EOF
 
           echo ""
-          echo "检查构建所需文件："
+          echo "检查构建文件："
 
           test -f qinglong/Dockerfile
           test -f qinglong/Kraftfile
@@ -207,7 +178,7 @@ jobs:
         run: |
           set -e
 
-          echo "正在检查 Registry 中的 QingLong 镜像..."
+          echo "正在检查 Registry 中的镜像..."
 
           IMAGE_LIST="$(
             unikraft \
@@ -226,7 +197,7 @@ jobs:
           fi
 
           echo ""
-          echo "镜像确认存在：$APP_IMAGE"
+          echo "确认镜像存在：$APP_IMAGE"
 
       - name: Create QingLong volume if needed
         shell: bash
@@ -258,7 +229,7 @@ jobs:
           fi
 
           echo ""
-          echo "当前 Volume："
+          echo "当前 Volume 列表："
 
           unikraft \
             --config "$UKC_CONFIG" \
@@ -318,12 +289,12 @@ jobs:
             --name "$APP_NAME" \
             --image "$APP_IMAGE" \
             --vcpus 1 \
-            --memory 2048M \
+            -m 2048M \
             --restart always \
-            --publish 443:5700/http+tls \
-            --volume "$APP_VOLUME:/ql/data" \
-            --env "QlBaseUrl=/" \
-            --env "QlPort=5700"
+            -p 443:5700/http+tls \
+            -v "$APP_VOLUME:/ql/data" \
+            -e "QlBaseUrl=/" \
+            -e "QlPort=5700"
 
           echo ""
           echo "QingLong 实例创建成功"
