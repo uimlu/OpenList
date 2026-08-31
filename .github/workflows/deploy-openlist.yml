@@ -103,7 +103,7 @@ jobs:
 
           chmod 600 "$UNIKRAFT_CONFIG"
 
-          echo "Unikraft Profile 配置完成。"
+          echo "Profile 配置完成。"
 
           unikraft \
             --config "$UNIKRAFT_CONFIG" \
@@ -123,11 +123,25 @@ jobs:
             source: ./Dockerfile
             format: erofs
 
-          cmd: ["/entrypoint.sh", "server"]
+          cmd: ["/bin/sh", "-c", "cd /opt/openlist && exec /entrypoint.sh server"]
           EOF
 
           echo "Kraftfile 内容："
           cat Kraftfile
+
+      - name: Delete old failed instance
+        shell: bash
+        run: |
+          set +e
+
+          echo "尝试删除旧的 OpenList 实例..."
+
+          printf 'y\n' | unikraft \
+            --config "$UNIKRAFT_CONFIG" \
+            instances delete "$OPENLIST_INSTANCE"
+
+          echo "旧实例清理完成。"
+          echo "持久化 Volume $OPENLIST_VOLUME 不会被删除。"
 
       - name: Create persistent volume
         shell: bash
