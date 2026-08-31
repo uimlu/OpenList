@@ -13,7 +13,7 @@ env:
   UKC_METRO: sfo
   UKC_ORGANIZATION: mingy
   APP_NAME: qinglong
-  APP_IMAGE: mingy/qinglong:latest
+  APP_IMAGE: index.unikraft.io/mingy/qinglong:latest
   APP_VOLUME: qinglong-data
   UKC_CONFIG: /home/runner/.config/unikraft/config.yaml
 
@@ -122,7 +122,7 @@ jobs:
           test -f qinglong/pnpm-lock.yaml
           test -f qinglong/.npmrc
 
-          echo "复制 Dockerfile 到 QingLong 根目录..."
+          echo "将 Dockerfile 复制到 QingLong 根目录..."
 
           cp qinglong/docker/Dockerfile qinglong/Dockerfile
 
@@ -171,7 +171,13 @@ jobs:
             --output "$APP_IMAGE"
 
           echo ""
-          echo "QingLong 镜像构建并推送成功"
+          echo "QingLong 镜像构建并推送命令已完成"
+
+          cd ..
+
+          echo ""
+          echo "等待 Registry 同步镜像到 $UKC_METRO..."
+          sleep 180
 
       - name: Verify QingLong image
         shell: bash
@@ -191,13 +197,14 @@ jobs:
 
           if ! echo "$IMAGE_LIST" | grep -Eqi \
             '(^|[[:space:]])mingy/qinglong([:@[:space:]]|$)'; then
+            echo ""
             echo "错误：Registry 中没有找到 QingLong 镜像"
             echo "期望镜像：$APP_IMAGE"
             exit 1
           fi
 
           echo ""
-          echo "镜像确认存在：$APP_IMAGE"
+          echo "确认镜像存在：$APP_IMAGE"
 
       - name: Create QingLong volume if needed
         shell: bash
