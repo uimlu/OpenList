@@ -1,0 +1,240 @@
+name: Deploy QingLong
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      UKC_METRO: sfo
+      UKC_ORGANIZATION: mingy
+      APP_NAME: qinglong
+      APP_IMAGE: whyour/qinglong:latest
+      APP_VOLUME: qinglong-data
+
+    steps:
+      - name: Install Unikraft CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl --proto '=https' \
+            --tlsv1.2 \
+            -fsSL \
+            https://unikraft.com/cli/install.sh | sh
+
+          CLI_PATH="$(command -v unikraft || true)"
+
+          if [ -z "$CLI_PATH" ]; then
+            for DIR in \
+              "$HOME/.local/bin" \
+              "$HOME/bin" \
+              "/usr/local/bin"; do
+
+              if [ -x "$DIR/unikraft" ]; then
+                CLI_PATH="$DIR/unikraft"
+                break
+              fi
+            done
+          fi
+
+          if [ -z "$CLI_PATH" ]; then
+            echo "错误：找不到 unikraft CLI。"
+            exit 1
+          fi
+
+          CLI_DIR="$(dirname "$CLI_PATH")"
+
+          echo "$CLI_DIR" >> "$GITHUB_PATH"
+          export PATH="$CLI_DIR:$PATH"
+
+          command -v unikraft
+          unikraft --help
+
+      - name: Configure Unikraft profile
+        env:
+          UKC_TOKEN: ${{ secrets.UKC_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${UKC_TOKEN:-}" ]; then
+            echo "错误：没有找到 GitHub Secret UKC_TOKEN。"
+            exit 1
+          fi
+
+          if [[ "$UKC_TOKEN" == Bearer\ * ]]; then
+            echo "错误：UKC_TOKEN 不要包含 Bearer 前缀。"
+            exit 1
+          fi
+
+          if [[ "$UKC_TOKEN" =~ [[:space:]] ]]; then
+            echo "错误：UKC_TOKEN 包含空格、换行或其他空白字符。"
+            exit 1
+          fi
+
+          export UNIKRAFT_CONFIG="$RUNNER_TEMP/unikraft-config.yaml"
+
+          echo "UNIKRAFT_CONFIG=$UNIKRAFT_CONFIG" >> "$GITHUB_ENV"
+
+          cat > "$UNIKRAFT_CONFIG" <<EOF
+          profiles:
+            default:
+              type: cloud
+              token: "$UKC_TOKEN"
+              organization: "$UKC_ORGANIZATION"
+              metros:
+                - name: "$UKC_METRO"
+                  endpoint: "https://api.$UKC_METRO.unikraft.cloud"
+                  country: "US"
+          EOF
+
+          chmod 600 "$UNIKRAFT_CONFIG"
+
+          echo "Unikraft Profile 配置完成。"
+
+          unikraft \
+            --config "$UNIKRAFT_CONFIG" \
+            profile list
+
+      - name: Delete old QingLong instance
+        shell: bash
+        run: |
+          set +e
+
+          echo "尝试删除旧的 QingLong 实例..."
+
+          printf 'y\n' | unikraft \
+            --config "$UNIKRAFT_CONFIG" \
+            instances delete "$APP_NAME"
+
+          echo "旧 QingLong 实例清理完成。"
+          echo "不会删除 $APP_VOLUME Volume。"
+          echo "不会影响 OpenList。"
+
+      - name: Create persistent volume
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VOLUME_INFO="$(
+            unikraft \
+              --config "$UNIKRAFT_CONFIG" \
+              volumes list 2>&1 || true
+          )"
+
+          echo "$VOLUME_INFO"
+
+          if printf '%s\n' "$VOLUME_INFO" | grep -Fq "$APP_VOLUME"; then
+            echo "Volume $APP_VOLUME 已存在，继续使用。"
+          else
+            echo "正在创建 Volume $APP_VOLUME..."
+
+            unikraft \
+              --config "$UNIKRAFT_CONFIG" \
+              volume create \
+              --metro "$UKC_METRO" \
+              --name "$APP_VOLUME" \
+              --size 1024M
+          fi
+
+      - name: Run QingLong
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "正在启动 QingLong..."
+          echo "Metro: $UKC_METRO"
+          echo "Instance: $APP_NAME"
+          echo "CPU: 2 vCPU"
+          echo "Memory: 2048M"
+
+          unikraft \
+            --config "$UNIKRAFT_CONFIG" \
+            --timeout 20m \
+            run \
+            --metro "$UKC_METRO" \
+            --name "$APP_NAME" \
+            --image "$APP_IMAGE" \
+            --cpu 2 \
+            --memory 2048M \
+            --restart always \
+            --publish 443:5700/http+tls \
+            --volume "$APP_VOLUME:/ql/data" \
+            --env "QlBaseUrl=/" \
+            --env "QlPort=5700"
+
+      - name: Wait for QingLong
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "等待 QingLong 进入 running 状态..."
+
+          unikraft \
+            --config "$UNIKRAFT_CONFIG" \
+            --timeout 10m \
+            instance wait "$APP_NAME" \
+            --until 'state==running'
+
+          echo "QingLong 已进入 running 状态。"
+
+      - name: Show QingLong URL
+        shell: bash
+        run: |
+          set +e
+
+          echo "正在读取 QingLong 实例信息..."
+
+          INSTANCE_INFO="$(
+            unikraft \
+              --config "$UNIKRAFT_CONFIG" \
+              instances list 2>&1
+          )"
+
+          echo "$INSTANCE_INFO"
+
+          FQDN="$(
+            printf '%s\n' "$INSTANCE_INFO" \
+              | grep -Eo '[a-zA-Z0-9.-]+\.(unikraft\.app|kraft\.host)' \
+              | head -n 1
+          )"
+
+          if [ -n "$FQDN" ]; then
+            QINGLONG_URL="https://$FQDN"
+          else
+            QINGLONG_URL="请查看上方实例列表中的 FQDN"
+          fi
+
+          {
+            echo "## QingLong 部署结果"
+            echo
+            echo "**访问地址：**"
+            echo
+            echo "$QINGLONG_URL"
+            echo
+            echo "**CPU：**"
+            echo
+            echo "2 vCPU"
+            echo
+            echo "**内存：**"
+            echo
+            echo "2048 MB"
+            echo
+            echo "**数据目录：**"
+            echo
+            echo "/ql/data"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo
+          echo "========================================"
+          echo "QingLong 访问地址：$QINGLONG_URL"
+          echo "CPU：2 vCPU"
+          echo "内存：2048 MB"
+          echo "数据目录：/ql/data"
+          echo "========================================"
