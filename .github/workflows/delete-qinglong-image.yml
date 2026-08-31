@@ -1,0 +1,144 @@
+name: Delete QingLong Registry Image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  UKC_METRO: sfo
+  UKC_ORGANIZATION: mingy
+  UKC_CONFIG: /home/runner/.config/unikraft/config.yaml
+  IMAGE_NAME: mingy/qinglong
+
+jobs:
+  delete-qinglong-image:
+    name: Delete mingy/qinglong image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install Unikraft CLI
+        shell: bash
+        run: |
+          set -e
+
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://unikraft.com/cli/install.sh | sh
+
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.unikraft/bin" >> "$GITHUB_PATH"
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
+
+          export PATH="$HOME/.local/bin:$HOME/.unikraft/bin:/usr/local/bin:$PATH"
+
+          if ! command -v unikraft >/dev/null 2>&1; then
+            echo "错误：找不到 unikraft CLI"
+            find "$HOME" -type f -name unikraft -print 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "Unikraft CLI 安装成功"
+          unikraft --help
+
+      - name: Configure Unikraft Cloud
+        shell: bash
+        env:
+          UKC_TOKEN: ${{ secrets.UKC_TOKEN }}
+        run: |
+          set -e
+
+          if [ -z "$UKC_TOKEN" ]; then
+            echo "错误：GitHub Secret UKC_TOKEN 未设置"
+            exit 1
+          fi
+
+          mkdir -p "$(dirname "$UKC_CONFIG")"
+
+          cat > "$UKC_CONFIG" <<EOF
+          profiles:
+            default:
+              type: cloud
+              token: ${UKC_TOKEN}
+              organization: ${UKC_ORGANIZATION}
+              metros:
+                - name: ${UKC_METRO}
+                  endpoint: https://api.${UKC_METRO}.unikraft.cloud
+                  country: US
+          EOF
+
+          chmod 600 "$UKC_CONFIG"
+
+          echo "Unikraft Cloud 配置完成"
+
+      - name: Show images before deletion
+        shell: bash
+        run: |
+          set -e
+
+          echo "删除前的 Registry 镜像列表："
+
+          unikraft \
+            --config "$UKC_CONFIG" \
+            --timeout 5m \
+            images list
+
+      - name: Delete QingLong image
+        shell: bash
+        run: |
+          set -e
+
+          echo "正在删除 Registry 镜像：$IMAGE_NAME"
+
+          unikraft \
+            --config "$UKC_CONFIG" \
+            --timeout 10m \
+            images delete "$IMAGE_NAME"
+
+          echo ""
+          echo "QingLong 镜像删除命令执行成功"
+
+      - name: Wait for Registry cleanup
+        shell: bash
+        run: |
+          set -e
+
+          echo "等待 Registry 清理镜像层..."
+          sleep 60
+
+      - name: Verify deletion
+        shell: bash
+        run: |
+          set -e
+
+          echo "删除后的 Registry 镜像列表："
+
+          IMAGE_LIST="$(
+            unikraft \
+              --config "$UKC_CONFIG" \
+              --timeout 5m \
+              images list
+          )"
+
+          echo "$IMAGE_LIST"
+
+          if echo "$IMAGE_LIST" | grep -Eqi \
+            '(^|[[:space:]/])mingy/qinglong([:@[:space:]]|$)'; then
+            echo ""
+            echo "警告：Registry 列表中仍然显示 mingy/qinglong"
+            echo "可能需要等待 Registry 后台清理，或在控制台手动删除。"
+          else
+            echo ""
+            echo "确认：mingy/qinglong 已不在镜像列表中"
+          fi
+
+          {
+            echo "## QingLong 镜像删除任务"
+            echo ""
+            echo "已执行删除：\`$IMAGE_NAME\`"
+            echo ""
+            echo "未操作以下资源："
+            echo "- \`openlist\`"
+            echo "- \`openlist-data\`"
+            echo "- \`qinglong-data\`"
+          } >> "$GITHUB_STEP_SUMMARY"
