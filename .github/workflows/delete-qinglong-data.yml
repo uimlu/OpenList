@@ -1,0 +1,209 @@
+name: Delete QingLong Data Volume
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  UKC_METRO: sfo
+  UKC_ORGANIZATION: mingy
+  UKC_CONFIG: /home/runner/.config/unikraft/config.yaml
+  TARGET_VOLUME: qinglong-data
+
+jobs:
+  delete-qinglong-data:
+    name: Delete qinglong-data only
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install Unikraft CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://unikraft.com/cli/install.sh | sh
+
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.unikraft/bin" >> "$GITHUB_PATH"
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
+
+          export PATH="$HOME/.local/bin:$HOME/.unikraft/bin:/usr/local/bin:$PATH"
+
+          if ! command -v unikraft >/dev/null 2>&1; then
+            echo "错误：没有找到 unikraft CLI"
+            exit 1
+          fi
+
+          echo "Unikraft CLI 安装成功"
+          unikraft version || unikraft --version || true
+
+      - name: Configure Unikraft Cloud
+        shell: bash
+        env:
+          UKC_TOKEN: ${{ secrets.UKC_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${UKC_TOKEN:-}" ]; then
+            echo "错误：GitHub Secret UKC_TOKEN 未设置"
+            exit 1
+          fi
+
+          mkdir -p "$(dirname "$UKC_CONFIG")"
+
+          cat > "$UKC_CONFIG" <<EOF
+          profiles:
+            default:
+              type: cloud
+              token: ${UKC_TOKEN}
+              organization: ${UKC_ORGANIZATION}
+              metros:
+                - name: ${UKC_METRO}
+                  endpoint: https://api.${UKC_METRO}.unikraft.cloud
+                  country: US
+          EOF
+
+          chmod 600 "$UKC_CONFIG"
+
+          echo "Unikraft Cloud 配置完成"
+          echo "Organization: $UKC_ORGANIZATION"
+          echo "Metro: $UKC_METRO"
+
+      - name: Verify target
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # 防止变量被意外修改后删除其他 Volume。
+          if [ "$TARGET_VOLUME" != "qinglong-data" ]; then
+            echo "安全检查失败：只允许删除 qinglong-data"
+            exit 1
+          fi
+
+          echo "允许删除：$TARGET_VOLUME"
+          echo "明确保留：openlist-data"
+
+      - name: Show volumes before deletion
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "删除前的 Volume 列表："
+
+          unikraft \
+            --config "$UKC_CONFIG" \
+            --timeout 5m \
+            volumes list
+
+      - name: Check QingLong data volume
+        id: check_volume
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VOLUME_LIST="$(
+            unikraft \
+              --config "$UKC_CONFIG" \
+              --timeout 5m \
+              volumes list
+          )"
+
+          echo "$VOLUME_LIST"
+
+          if echo "$VOLUME_LIST" |
+            awk -v target="$TARGET_VOLUME" '
+              {
+                for (i = 1; i <= NF; i++) {
+                  if ($i == target) {
+                    found = 1
+                  }
+                }
+              }
+              END {
+                exit(found ? 0 : 1)
+              }
+            '; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "已找到目标 Volume：$TARGET_VOLUME"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "目标 Volume 不存在，无需删除"
+          fi
+
+      - name: Delete qinglong-data only
+        if: steps.check_volume.outputs.exists == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "========================================="
+          echo "正在永久删除 Volume：$TARGET_VOLUME"
+          echo "不会删除 Volume：openlist-data"
+          echo "不会删除实例：openlist"
+          echo "不会删除任何 Registry 镜像"
+          echo "========================================="
+
+          unikraft \
+            --config "$UKC_CONFIG" \
+            --timeout 10m \
+            volumes delete "$TARGET_VOLUME"
+
+          echo "删除命令执行成功"
+
+      - name: Wait for deletion
+        if: steps.check_volume.outputs.exists == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "等待 Volume 状态更新..."
+          sleep 30
+
+      - name: Verify deletion
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "删除后的 Volume 列表："
+
+          VOLUME_LIST="$(
+            unikraft \
+              --config "$UKC_CONFIG" \
+              --timeout 5m \
+              volumes list
+          )"
+
+          echo "$VOLUME_LIST"
+
+          if echo "$VOLUME_LIST" |
+            awk -v target="$TARGET_VOLUME" '
+              {
+                for (i = 1; i <= NF; i++) {
+                  if ($i == target) {
+                    found = 1
+                  }
+                }
+              }
+              END {
+                exit(found ? 0 : 1)
+              }
+            '; then
+            echo "错误：$TARGET_VOLUME 仍然存在"
+            echo "它可能仍挂载在某个实例上，需要先停止实例并解除挂载。"
+            exit 1
+          fi
+
+          echo ""
+          echo "确认：$TARGET_VOLUME 已删除"
+
+          {
+            echo "## QingLong Volume 删除完成"
+            echo ""
+            echo "- 已删除：\`qinglong-data\`"
+            echo "- 保留：\`openlist-data\`"
+            echo "- 未删除任何实例"
+            echo "- 未删除任何 Registry 镜像"
+          } >> "$GITHUB_STEP_SUMMARY"
